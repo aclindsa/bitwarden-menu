@@ -16,6 +16,7 @@ import sys
 import bwm
 from bwm.bwm import DmenuRunner
 from bwm.menu import dmenu_err
+from bwm import bwserve
 
 # Python 3.14 default is 'forkserver'. Set to 'fork' for backwards compatibility
 multiprocessing.set_start_method('fork')

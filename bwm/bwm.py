@@ -19,6 +19,7 @@ from bwm.bwedit import add_entry, edit_entry, manage_collections, manage_folders
 from bwm.bwtype import type_text, type_entry
 from bwm.bwview import view_all_entries, view_entry
 from bwm.menu import dmenu_select, dmenu_err
+from bwm.bwserve import BWCLIServer
 import bwm
 
 
@@ -58,6 +59,7 @@ class Vault:  # pylint: disable=too-many-instance-attributes
     twofactor: str
     autotype: str = field(default=None)
     session: bytes = field(default_factory=bytes)
+    bwcliserver: BWCLIServer | None = field(default=None)
     prev_entry: list[bwcli.Item] = field(default=None)
     entries: list[bwcli.Item] = field(default_factory=bwcli.Item)
     folders: dict[dict] = field(default_factory=dict)
@@ -144,9 +146,13 @@ def set_vault(vaults):
     vault_dir = join(bwm.DATA_HOME, urlsplit(vault.url).netloc)
     makedirs(vault_dir, exist_ok=True)
     environ["BITWARDENCLI_APPDATA_DIR"] = vault_dir
-    status = bwcli.status()
+    if not vault.bwcliserver:
+        vault.bwcliserver = BWCLIServer()
+    status = vault.bwcliserver.get_status()
     err = ""
     if not status:
+        del vault.bwcliserver
+        vault.bwcliserver = None
         vault.session = False
     elif status['status'] == 'unauthenticated':
         if status['serverUrl'] is None:
@@ -160,9 +166,11 @@ def set_vault(vaults):
         environ['BW_CLIENTSECRET'] = get_passphrase("client_secret (if required)")
         vault.session, err = bwcli.login(vault.email, vault.passw, vault.twofactor, code)
         del environ['BW_CLIENTSECRET']
+        vault.bwcliserver = BWCLIServer()
+        vault.session, err = vault.bwcliserver.unlock(vault.passw)
     elif status['status'] == 'locked':
         vault.passw = vault.passw or password()
-        vault.session, err = bwcli.unlock(vault.passw)
+        vault.session, err = vault.bwcliserver.unlock(vault.passw)
     elif status['status'] == 'unlocked':
         pass
     if vault.session is False:
@@ -300,13 +308,13 @@ def dmenu_collections(collections, session):
     return Run.CONTINUE
 
 
-def dmenu_sync(session):
+def dmenu_sync(bwcliserver):
     """Call vault sync option (called from dmenu_run)
 
-        Args: session (bytes)
+        Args: bwcliserver (BWCLIServer)
 
     """
-    res = bwcli.sync(session)
+    res = bwcliserver.sync()
     if res is False:
         dmenu_err("Sync error. Check logs.")
 
@@ -356,7 +364,7 @@ def dmenu_run(vault):
                                     vault.collections, vault.session),
                'Manage folders': partial(dmenu_folders, vault.folders, vault.session),
                'Manage collections': partial(dmenu_collections, vault.collections, vault.session),
-               'Sync vault': partial(dmenu_sync, vault.session),
+               'Sync vault': partial(dmenu_sync, vault.bwcliserver),
                'Switch vaults': None,
                "[Clipboard]/Type" if bwm.CLIPBOARD is True else "Clipboard/[Type]": dmenu_clipboard,
                'Lock vault': bwcli.lock}
@@ -399,7 +407,7 @@ class DmenuRunner(multiprocessing.Process):
             sys.exit()
         self.vault = self.vaults[0]
         self.vault.entries, self.vault.folders, self.vault.collections, self.vault.orgs = \
-            bwcli.get_entries(self.vault.session)
+            self.vault.bwcliserver.get_entries()
         if not all(i for i in (self.vault.entries, self.vault.folders,
                    self.vault.collections, self.vault.orgs) if i is False):
             dmenu_err("Error loading vault entries.")
