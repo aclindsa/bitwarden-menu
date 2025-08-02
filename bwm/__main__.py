@@ -16,6 +16,7 @@ import sys
 import bwm
 from bwm.bwm import DmenuRunner
 from bwm.menu import dmenu_err
+from bwm import bwserve
 
 
 def find_free_port():
